@@ -65,6 +65,7 @@ jobs:
       contents: read
       id-token: write
       pull-requests: read
+      statuses: write
     uses: tempoxyz/gh-actions/.github/workflows/pr-audit.yml@545ea7b097e391a3a698b9d756d3263f10c7cd8b # 2026-10-20T20-47-53Z-545ea7b0
     with:
       audit-on-push: true
