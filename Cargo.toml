@@ -62,7 +62,8 @@ syn = "2.0"
 
 # test deps
 test-fuzz = "7"
-proptest = "1.6"
+# The interop test adapter requires Proptest's Rand 0.9 interface.
+proptest = ">=1.6, <1.11"
 proptest-arbitrary-interop = "0.1"
 rstest = "0.26.1"
 similar-asserts = { version = "1.5.0", features = ["serde"] }
