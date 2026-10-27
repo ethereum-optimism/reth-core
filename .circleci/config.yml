@@ -1,0 +1,156 @@
+version: 2.1
+
+jobs:
+  cargo:
+    parameters:
+      command:
+        type: string
+      rust_toolchain:
+        default: "1.99.1"
+        enum: ["1.93", "1.99.1", "nightly-2026-08-22"]
+        type: enum
+      save_build_cache:
+        default: false
+        type: boolean
+      target:
+        default: ""
+        enum: ["", "riscv32imac-unknown-none-elf"]
+        type: enum
+    docker:
+      - image: rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1
+    environment:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_TERM_COLOR: always
+      RUSTC_WRAPPER: ""
+      RUSTUP_TOOLCHAIN: << parameters.rust_toolchain >>
+    resource_class: large
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - core-v1-<< parameters.rust_toolchain >>-{{ arch }}-{{ checksum "Cargo.lock" }}
+            - core-v1-<< parameters.rust_toolchain >>-{{ arch }}-
+      - run:
+          command: |
+            rustup toolchain install "<< parameters.rust_toolchain >>" \
+              --profile minimal --component clippy --component rustfmt
+            if [ -n "<< parameters.target >>" ]; then
+              rustup target add "<< parameters.target >>"
+            fi
+            mkdir -p /usr/local/cargo/git /usr/local/cargo/registry
+          name: Install pinned toolchain
+      - run:
+          command: << parameters.command >>
+          name: Validate release
+          no_output_timeout: 20m
+      - when:
+          condition: << parameters.save_build_cache >>
+          steps:
+            - save_cache:
+                key: core-v1-<< parameters.rust_toolchain >>-{{ arch }}-{{ checksum "Cargo.lock" }}
+                paths:
+                  - /usr/local/cargo/git
+                  - /usr/local/cargo/registry
+                  - target
+
+  ci-success:
+    docker:
+      - image: rust:1.95-bookworm@sha256:6258907abe69656e41cd992e0b705cdcfabcbbe3db374f92ed2d47121282d4a1
+    resource_class: small
+    steps:
+      - run: echo "All release checks passed"
+
+workflows:
+  core-ci:
+    jobs:
+      - cargo:
+          command: cargo test --locked --workspace
+          name: test-stable-default
+      - cargo:
+          command: cargo test --locked --workspace --no-default-features
+          name: test-stable-no-default
+      - cargo:
+          command: cargo test --locked --workspace --all-features
+          name: test-stable-all
+          save_build_cache: true
+      - cargo:
+          command: cargo test --locked --workspace
+          name: test-nightly-default
+          rust_toolchain: nightly-2026-08-22
+      - cargo:
+          command: cargo test --locked --workspace --no-default-features
+          name: test-nightly-no-default
+          rust_toolchain: nightly-2026-08-22
+      - cargo:
+          command: cargo test --locked --workspace --all-features
+          name: test-nightly-all
+          rust_toolchain: nightly-2026-08-22
+          save_build_cache: true
+      - cargo:
+          command: cargo build --locked --workspace
+          name: build-msrv-default
+          rust_toolchain: "1.93"
+          save_build_cache: true
+      - cargo:
+          command: cargo build --locked --workspace --no-default-features
+          name: build-msrv-no-default
+          rust_toolchain: "1.93"
+      - cargo:
+          command: |
+            cargo test --locked --workspace --doc
+            cargo test --locked --workspace --doc --all-features
+          name: doctest
+      - cargo:
+          command: |
+            cargo install --locked cargo-hack --version 0.6.44
+            cargo hack check --locked --feature-powerset --depth 1
+          name: feature-checks
+      - cargo:
+          command: bash scripts/check_no_std.sh
+          name: check-no-std
+          target: riscv32imac-unknown-none-elf
+      - cargo:
+          command: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          name: clippy
+          rust_toolchain: nightly-2026-08-22
+      - cargo:
+          command: |
+            RUSTDOCFLAGS="--cfg docsrs -D warnings --show-type-layout --generate-link-to-definition -Zunstable-options" \
+              cargo doc --locked --workspace --all-features --no-deps --document-private-items
+          name: docs
+          rust_toolchain: nightly-2026-08-22
+      - cargo:
+          command: cargo fmt --all --check
+          name: fmt
+          rust_toolchain: nightly-2026-08-22
+      - cargo:
+          command: |
+            set -euo pipefail
+            archive=cargo-deny-0.20.2-x86_64-unknown-linux-musl.tar.gz
+            echo "Downloading cargo-deny 0.20.2"
+            curl --fail --silent --show-error --location --retry 3 \
+              "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/${archive}" \
+              --output "/tmp/${archive}"
+            echo "Downloaded cargo-deny 0.20.2; verifying checksum"
+            echo "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f /tmp/${archive}" | sha256sum --check
+            tar -xzf "/tmp/${archive}" -C /usr/local/bin --strip-components=1 \
+              cargo-deny-0.20.2-x86_64-unknown-linux-musl/cargo-deny
+            cargo deny --locked --all-features check all
+          name: deny
+      - ci-success:
+          requires:
+            - build-msrv-default
+            - build-msrv-no-default
+            - check-no-std
+            - clippy
+            - deny
+            - docs
+            - doctest
+            - feature-checks
+            - fmt
+            - test-nightly-all
+            - test-nightly-default
+            - test-nightly-no-default
+            - test-stable-all
+            - test-stable-default
+            - test-stable-no-default
