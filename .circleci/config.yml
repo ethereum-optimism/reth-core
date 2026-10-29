@@ -25,7 +25,17 @@ jobs:
       RUSTUP_TOOLCHAIN: << parameters.rust_toolchain >>
     resource_class: large
     steps:
-      - checkout
+      - run:
+          command: |
+            set -euo pipefail
+            echo "Checking out public core revision ${CIRCLE_SHA1}"
+            git init .
+            git remote add origin https://github.com/ethereum-optimism/reth-core.git
+            git fetch --no-tags --depth=1 origin "$CIRCLE_SHA1"
+            git checkout --detach FETCH_HEAD
+            test "$(git rev-parse HEAD)" = "$CIRCLE_SHA1"
+            echo "Checked out public core revision ${CIRCLE_SHA1}"
+          name: Checkout public release revision
       - restore_cache:
           keys:
             - core-v1-<< parameters.rust_toolchain >>-{{ arch }}-{{ checksum "Cargo.lock" }}
